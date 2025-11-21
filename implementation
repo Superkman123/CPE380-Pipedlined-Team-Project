@@ -1,9 +1,5 @@
- 
-
-Icarus Verilog Simulator CGI Interface
+ Icarus Verilog Simulator CGI Interface
 This is a "complete MIPS processor" that only understands how to execute a series of RTYPE or immediate or load word or store word or branch equals instructions, but is relatively efficiently pipelined. The pipeline includes the optimization pushing the branch comparison back to the ID stage, and does value forwarding and branch prediction assuming always not taken. This is very similar to the example from these slides, but not identical. Also note that it is not identical in structure to the single-cycle version, but is derived from it and is very similar overall. Your task is to implement the same additional instructions you implemented in the single-cycle project, but this time you are adding them from scratch. In other words, I haven't pre-defined the opcodes or added tracing support for the instructions you are implementing.
-
-
 
 // Testbench options
 `define RUNTIME 380	// How long simulator can run
@@ -311,10 +307,5 @@ initial begin
 end
 endmodule
 
-
-
-
 The C program that generated this page was written by Hank Dietz using the CGIC library to implement the CGI interface.
-
-
 EE380 Computer Organization and Design.
