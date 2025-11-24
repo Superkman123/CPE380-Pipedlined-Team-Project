@@ -1,0 +1,165 @@
+`define	REGCNT	[31:0]	// register count
+`define	MEMCNT	[511:0] // memory count implemented
+`define	OPCODE	[5:0]	// 6-bit opcodes
+`define	ALUOP	[3:0]	// Simplified ALU codes
+`define	ALUOP	[4:0]	// Simplified ALU codes, increased size for new operations
+
+// Fields
+`define OP	[31:26]	// opcode field
+@@ -30,6 +30,7 @@
+// Instruction encoding
+`define	RTYPE	6'h00	// OP field for all RTYPE instructions
+`define BEQ	6'h04	// OP field
+`define BNE	6'h06	// OP field  added code for BNE
+`define	ADDIU	6'h09	// OP field
+`define	SLTIU	6'h0b	// OP field
+`define	ANDI	6'h0c	// OP field
+@@ -44,10 +45,16 @@
+`define	OR	6'h25	// FUNCT field
+`define	XOR	6'h26	// FUNCT field
+
+
+`define	NOR	6'h27   // added FUNCT code for NOR
+
+`define	SLTU	6'h2b	// FUNCT field
+
+//Added FUNCT code for shifts
+`define SLLV    6'h04   // FUNCT field
+`define SRLV    6'h06   // FUNCT field 
+`define SRAV    6'h07   // FUNCT field 
+
+// Simplified ALU codes, default to lui
+`define	ALUAND	4'b0000
+`define	ALUOR	4'b0001
+@@ -60,6 +67,12 @@
+`define	ALULUI	4'b1000
+`define	ALUXOR	4'b1111
+
+//Added ALU code for shifts ad NOR
+`define ALUNOR  5'b10000
+`define ALUSLLV 5'b10001
+`define ALUSRLV 5'b10010
+`define ALUSRAV 5'b10011
+
+// Generic multi-cycle processor
+module processor(halt, reset, clk);
+output reg halt;
+@@ -94,14 +107,56 @@ initial begin
+
+    m[16] = 0;
+    m[256] = 22;
+
+    // Test cases for new instructions start at m[16] (PC address 64)
+    r[8] = 32'h87654321; // rs for shifts
+    r[9] = 4;             // rt for shifts (shift amount 4)
+    r[10] = 3;            // rt for sllv/srlv test 2
+    r[11] = 0;            // rs for nor
+    r[12] = 0;            // rt for nor
+    r[13] = 1;            // register for bne test (rs)
+    r[14] = 2;            // register for bne test (rt)
+    
+    // NOR test: $s1=$11 | $12  (0 NOR 0 = -1 or 0xFFFFFFFF)
+    `RPACK(m[16], 11, 12, 1, 0, `NOR) 
+
+    // Shift tests: $t0 = sllv/srlv/srav $t0, $s0, $s1
+    // srav r[15], r[8], r[9] (r[8]=0x87654321, r[9]=4) -> Expected: 0xF8765432
+    `RPACK(m[17], 8, 9, 15, 0, `SRAV) 
+    // srlv r[16], r[8], r[9] -> Expected: 0x08765432
+    `RPACK(m[18], 8, 9, 16, 0, `SRLV)
+    // sllv r[17], r[8], r[9] -> Expected: 0x76543210
+    `RPACK(m[19], 8, 9, 17, 0, `SLLV)
+
+    // BNE Test 1: r[13] != r[14], should branch to m[22]
+    // $13=1, $14=2. Offset to m[22] is 2 instructions (8 bytes, imm=2).
+    `IPACK(m[20], `BNE, 13, 14, 2) 
+    // This NOP should be skipped by BNE
+    m[21] = `NOP; 
+    // Target of BNE branch: ADDIU $1, $0, 100. This sets r[1] to a unique value if branch works.
+    `IPACK(m[22], `ADDIU, 0, 1, 100) 
+
+    // BNE Test 2: r[13] == r[14] if we clear r[14]. Should NOT branch.
+    `IPACK(m[23], `ADDIU, 0, 14, 1) // Set r[14] = 1
+    // r[13]=1, r[14]=1. Next BNE should fall through to m[25]. Offset to m[26] is 1 instruction.
+    `IPACK(m[24], `BNE, 13, 14, 1)
+    // Fall-through NOP
+    m[25] = `NOP; 
+    // Target if BNE branches (shouldn't happen): ADDIU $1, $0, 200 (r[1] should remain 100)
+    `IPACK(m[26], `ADDIU, 0, 1, 200)
+
+    // Halt instruction (0xFFFFFFFF = invalid opcode)
+    m[27] = 32'hFFFFFFFF;
+end
+
+
+// IF registers
+reg `ADDR IF_pc;
+reg `INST IF_ir;
+
+// ID registers
+reg RegDst, Branch, MemRead, MemWrite, ALUSrc, RegWrite, Bad, ID_MemRead, ID_MemWrite, ID_Bad;
+reg signed BranchCondition; // Added signed wire for BNE logic
+reg `ALUOP ALUOp, ID_ALUOp;
+reg `WORD s, t, imm, ID_s, ID_t, ID_src;
+reg `REG ID_rd;
+@@ -177,10 +232,16 @@ always @(posedge clk) if (running && !ID_Bad) begin
+	  `NOR:    begin RegDst=1; Branch=0; MemRead=0; ALUOp=`ALUNOR; MemWrite=0; ALUSrc=0; RegWrite=1; Bad=0; end // NOR decode logic
+
+	  `SLTU:   begin RegDst=1; Branch=0; MemRead=0; ALUOp=`ALUSLT; MemWrite=0; ALUSrc=0; RegWrite=1; Bad=0; end
+	  default: begin RegDst=0; Branch=0; MemRead=0; ALUOp=`ALUOR;  MemWrite=0; ALUSrc=0; RegWrite=0; Bad=1; end
+
+	  `SLLV:   begin RegDst=1; Branch=0; MemRead=0; ALUOp=`ALUSLLV; MemWrite=0; ALUSrc=0; RegWrite=1; Bad=0; end // Added SLLV decode
+      `SRLV:   begin RegDst=1; Branch=0; MemRead=0; ALUOp=`ALUSRLV; MemWrite=0; ALUSrc=0; RegWrite=1; Bad=0; end // Added SRLV decode
+      `SRAV:   begin RegDst=1; Branch=0; MemRead=0; ALUOp=`ALUSRAV; MemWrite=0; ALUSrc=0; RegWrite=1; Bad=0; end // Added SRAV decode
+	 
+		default: begin RegDst=0; Branch=0; MemRead=0; ALUOp=`ALUOR;  MemWrite=0; ALUSrc=0; RegWrite=0; Bad=1; end
+        endcase
+      end
+      `BEQ:    begin RegDst=0; Branch=1; MemRead=0; ALUOp=`ALUSUB; MemWrite=0; ALUSrc=0; RegWrite=0; Bad=0; end
+      `BEQ:    begin RegDst=0; Branch=1; MemRead=0; ALUOp=`ALUSUB; MemWrite=0; ALUSrc=0; RegWrite=0; Bad=0; BranchCondition=1; end // Added BranchCondition=1 for BEQ
+      `BNE:    begin RegDst=0; Branch=1; MemRead=0; ALUOp=`ALUSUB; MemWrite=0; ALUSrc=0; RegWrite=0; Bad=0; BranchCondition=0; end // Added BNE decode and BranchCondition=0
+      `ADDIU:  begin RegDst=0; Branch=0; MemRead=0; ALUOp=`ALUADD; MemWrite=0; ALUSrc=1; RegWrite=1; Bad=0; end
+      `SLTIU:  begin RegDst=0; Branch=0; MemRead=0; ALUOp=`ALUSLT; MemWrite=0; ALUSrc=1; RegWrite=1; Bad=0; end
+      `ANDI:   begin RegDst=0; Branch=0; MemRead=0; ALUOp=`ALUAND; MemWrite=0; ALUSrc=1; RegWrite=1; Bad=0; end
+@@ -211,6 +272,9 @@ end
+
+// EX: EXecute stage
+always @(posedge clk) if (running) begin
+ // Temporary variable for srav implementation
+  reg [63:0] temp_srav; 
+
+  case (ID_ALUOp)
+    `ALUAND: alu = ID_s & ID_src;
+    `ALUOR:  alu = ID_s | ID_src;
+@@ -220,7 +284,14 @@ always @(posedge clk) if (running) begin
+    `ALUXOR: alu = ID_s ^ ID_src;
+
+    `ALUNOR: alu = ~(ID_s | ID_src); // implemented NOR in ALU execution
+
+    `ALUSLLV: alu = ID_s << (ID_src[4:0]); // Shift by 5 LSBs of rt
+    `ALUSRLV: alu = ID_s >> (ID_src[4:0]); // Shift by 5 LSBs of rt
+    `ALUSRAV: begin 
+      // Sign extend to 64 bits before shifting, then take bottom 32 bits
+      temp_srav = {{32{ID_s[31]}}, ID_s}; 
+      temp_srav = temp_srav >>> (ID_src[4:0]); // Arithmetic right shift operator >>>
+      alu = temp_srav[31:0];
+    end
+    default: alu = (ID_src << 16);
+  endcase
+
+@@ -277,11 +348,16 @@ always @(posedge clk) if (running) begin
+	`SLTU:   $display("IF  sltu $%1d,$%1d,$%1d", IF_ir `RD, IF_ir `RS, IF_ir `RT);
+
+	`NOR:    $display("IF  nor $%1d,$%1d,$%1d", IF_ir `RD, IF_ir `RS, IF_ir `RT); // trace output for NOR
+	// Added trace output for the shift variables
+    `SLLV:   $display("IF  sllv $%1d,$%1d,$%1d", IF_ir `RD, IF_ir `RS, IF_ir `RT);
+    `SRLV:   $display("IF  srlv $%1d,$%1d,$%1d", IF_ir `RD, IF_ir `RS, IF_ir `RT);
+	`SRAV:   $display("IF  srav $%1d,$%1d,$%1d", IF_ir `RD, IF_ir `RS, IF_ir `RT);
+
+	default: $display("IF  OP=%x RS=%1d RT=%1d RD=%1d SHAMT=%1d FUNCT=%x", IF_ir `OP, IF_ir `RS, IF_ir `RT, IF_ir `RD, IF_ir `SHAMT, IF_ir `FUNCT);
+      endcase
+    end
+    `BEQ:    $display("IF  beq $%1d,$%1d,offset=$%1d", IF_ir `RT, IF_ir `RS, IF_ir `IMM);
+	`BNE:    $display("IF  bne $%1d,$%1d,offset=$%1d", IF_ir `RT, IF_ir `RS, IF_ir `IMM);
+    `ADDIU:  $display("IF  addiu $%1d,$%1d,$%1d", IF_ir `RT, IF_ir `RS, IF_ir `IMM);
+    `SLTIU:  $display("IF  sltiu $%1d,$%1d,$%1d", IF_ir `RT, IF_ir `RS, IF_ir `IMM);
+    `ANDI:   $display("IF  andi $%1d,$%1d,$%1d", IF_ir `RT, IF_ir `RS, IF_ir `IMM);
